@@ -275,32 +275,61 @@ insert_lines:
       ifvarclass => "!$(cindex[$(index)])_in_file";
 }
 
-bundle edit_line set_config_values(v)
-
- # Sets the RHS of configuration items in the file of the form
- #   LHS RHS
- # If the line is commented out with #, it gets uncommented first.
- # Adds a new line if none exists.
- # The argument is the fully-qualified name of an associative array containing v[LHS]="rhs"
-
+bundle edit_line set_config_values(values)
 {
-vars:
-  "index" slist => getindices("$(v)");
+      # Set the values for configuration files using "keyword value" grammar
 
-  # Be careful if the index string contains funny chars
-  "cindex[$(index)]" string => canonify("$(index)");
+      # Usage: set_keyword_values("bundle.array")
+      #   bundle.array: literal name of the array with qualifying namespace
 
-replace_patterns:
-  # If the line is there, maybe commented out, uncomment and replace with
-  # the correct value
-  "^\s*($(index)\s+(?!$($(v)[$(index)])).*|# ?$(index)\s+.*)$"
-    replace_with => value("$(index) $($(v)[$(index)])"),
-    classes => always("replace_attempted_$(cindex[$(index)])");
+      # Example
+      # bundle agent mybundle
+      # {
+      #   vars:
+      #     "settings[keyword]" string => "value"
+      #   files:
+      #     "/etc/somefile"
+      #       edit_line => set_keyword_values("mybundle.settings")
+      # }
 
-insert_lines:
-  "$(index) $($(v)[$(index)])"
-    ifvarclass => "replace_attempted_$(cindex[$(index)])";
+      # Runs in three passes for each keyword, values pair
+      #  1) Attempts to replace existing "keyword value" line
+      #  2) Attempts to uncomment and replace existing "# keywork value" line
+      #  3) If all else fails, inserts the "keyword value" line
 
+  vars:
+      "index"
+        slist => getindices("$(values)"),
+        comment => "Keywords to set values for in the file";
+
+      "canonical_index[$(index)]"
+        string => canonify($(index)),
+        comment => "Make keyword index suitable for class names";
+
+  classes:
+      "found_$(canonical_index[$(index)])"
+        expression => regline("\s*$(index)\s+.*","$(edit.filename)"),
+        comment => "Find all existing, defined keywords in the file";
+
+      "comment_$(canonical_index[$(index)])"
+        expression => regline("\s*#\s*$(index)\s+.*","$(edit.filename)"),
+        comment => "Find all commented, defined keywords in the file";
+
+  replace_patterns:
+      "^\s*$(index)\s+(?!$($(values)[$(index)])$).*$"
+        replace_with => value("$(index) $($(values)[$(index)])"),
+        ifvarclass => "found_$(canonical_index[$(index)])",
+        comment => "Attempt to replace existing keyword-value pairs";
+
+      "^\s*#\s*$(index)\s+.*$"
+        replace_with => value("$(index) $($(values)[$(index)])"),
+        ifvarclass => "!found_$(canonical_index[$(index)]).comment_$(canonical_index[$(index)])",
+        comment => "Attempt to uncomment and replace existing, commented keyword-value pairs";
+
+  insert_lines:
+      "$(index) $($(values)[$(index)])"
+        ifvarclass => "!found_$(canonical_index[$(index)]).!comment_$(canonical_index[$(index)])",
+        comment => "Insert missing keyword-value pairs";
 }
 
 bundle edit_line set_config_values_matching(v,pat)
